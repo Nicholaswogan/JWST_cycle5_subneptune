@@ -89,7 +89,7 @@ class MamajekColorTable:
         if return_components:
             return J_est, {"J-Ks": JminusKs_interp, "est_err_mag": est_err}
         else:
-            return J_est
+            return J_est, est_err
         
 def earth_insolation():
     # Get W/m^2 at Earth
@@ -130,13 +130,15 @@ def chen_kipping_mass(Rp):
 def compute_TSM(Rp, Teq, Mp, Rs, m_j):
     "Compute the Transmission Spectroscopy Metric (TSM) from Kempton et al. (2018)"
 
+    Rp1 = unp.nominal_values(Rp)
+
     # Kempton+2018 Table 1
-    scale = np.zeros(len(Rp))
-    scale[np.where(Rp < 1.5)] = 0.190
-    scale[np.where((Rp >= 1.5)  & (Rp < 2.75))] = 1.26
-    scale[np.where((Rp >= 2.75) & (Rp < 4.0))] = 1.28
-    scale[np.where((Rp >= 4.0)  & (Rp < 10.0))] = 1.15
-    scale[np.where(Rp >= 10.0)] = 1.15
+    scale = np.zeros(len(Rp1))
+    scale[np.where(Rp1 < 1.5)] = 0.190
+    scale[np.where((Rp1 >= 1.5)  & (Rp1 < 2.75))] = 1.26
+    scale[np.where((Rp1 >= 2.75) & (Rp1 < 4.0))] = 1.28
+    scale[np.where((Rp1 >= 4.0)  & (Rp1 < 10.0))] = 1.15
+    scale[np.where(Rp1 >= 10.0)] = 1.15
 
     factor_mag = 10.0**(-m_j/5)
     TSM = scale * (Rp**3.0*Teq)/(Mp*Rs**2.0) * factor_mag
@@ -154,6 +156,33 @@ def zeng_Mp_Rp_relation(Mp, CMF):
     Rp = (1.07 - 0.21*CMF)*(Mp)**(1/3.7)
     return Rp
 
+def  aguichine_Mp_Rp_relation(Mp, x_H2O):
+    "Aguichine+2021 relation for steam worlds. Assumes core/(core + mantle) = 30% and T = 400 K"
+
+    _x_H2O = np.array([
+        0.10000, 0.20000, 0.30000, 0.40000, 0.50000, 
+        0.60000, 0.70000, 0.80000, 0.90000, 1.00000
+    ])
+    a = np.array([
+        0.226906975164, 0.217765024811, 0.212442203827, 0.204976173004, 0.202130265229, 
+        0.197084836012, 0.194221621762, 0.189130108899, 0.186645182403, 0.183937966542
+    ])
+    b = np.array([
+        0.094067692688, 0.128018507250, 0.152879500402, 0.178481937058, 0.196448409997, 
+        0.216550911456, 0.232352339775, 0.251663613406, 0.266665391910, 0.282211819712
+    ])
+    c = np.array([
+        2.774927261553, 2.783267397986, 2.705782421433, 2.821807208850, 2.736118616554, 
+        2.807745472991, 2.727520125379, 2.843993163104, 2.791935041902, 2.797308944390
+    ])
+    d = np.array([
+        1.051566266255, 0.977423150612, 0.944053487148, 0.875932080161, 0.858441722849, 
+        0.809922791844, 0.801305433572, 0.747937892614, 0.735664369806, 0.704831238292
+    ])
+    log10Mp = np.log10(Mp)
+    log10Rp = a*log10Mp + np.exp(-d*(log10Mp + c)) + b
+    return 10.0**np.interp(x_H2O, _x_H2O, log10Rp)
+
 def determine_skiprows(filename):
     with open(filename,'r') as f:
         lines = f.readlines()
@@ -162,6 +191,26 @@ def determine_skiprows(filename):
             break
     return i
     
+def make_unp_uarray(df, key, inds=None):
+    if inds is None:
+        inds = np.ones(len(df[key]),bool)
+    return unp.uarray(df[key][inds], (df[key+'err1'][inds] - df[key+'err2'][inds])/2)
+
+def set_unp_uarray(df, key, value, inds=None):
+    n = len(df[list(df.keys())[0]])
+    # Make inds
+    if inds is None:
+        inds = np.ones(n, bool)
+    # Add error keys if needed
+    keys = [key, key+'err1', key+'err2']
+    for a in keys:
+        if a not in df:
+            df[a] = np.empty(n)
+    df[key][inds] = unp.nominal_values(value[inds])
+    df[key+'err1'][inds] = unp.std_devs(value[inds])
+    df[key+'err2'][inds] = -unp.std_devs(value[inds])
+    return df
+
 def search_nea_csv(filename, filters={}):
 
     df1 = pd.read_csv(filename, skiprows=determine_skiprows(filename))
@@ -169,27 +218,15 @@ def search_nea_csv(filename, filters={}):
     for key in df1:
         df[key] = df1[key].to_numpy()
 
-    # If pl_eqt is not specified, then compute it
+    # Compute Teq and insolation that is self-consistent
     inds = (
-        np.isnan(df['pl_eqt']) & 
         np.isfinite(df['st_teff']) & 
         np.isfinite(df['st_rad']) & 
         np.isfinite(df['pl_orbsmax'])
     )
-    tmp = insolation(df['st_teff'][inds], df['st_rad'][inds], df['pl_orbsmax'][inds]) # W/m^2
-    df['pl_insol'][inds] = tmp/earth_insolation() # normalize by Earth
-    df['pl_eqt'][inds] = equilibrium_temperature(tmp, 0.0)
-
-    # Same exercise for pl_insol
-    inds = (
-        np.isnan(df['pl_insol']) & 
-        np.isfinite(df['st_teff']) & 
-        np.isfinite(df['st_rad']) & 
-        np.isfinite(df['pl_orbsmax'])
-    )
-    tmp = insolation(df['st_teff'][inds], df['st_rad'][inds], df['pl_orbsmax'][inds]) # W/m^2
-    df['pl_insol'][inds] = tmp/earth_insolation() # normalize by Earth
-    df['pl_eqt'][inds] = equilibrium_temperature(tmp, 0.0)
+    tmp = insolation(make_unp_uarray(df,'st_teff'), make_unp_uarray(df,'st_rad'), make_unp_uarray(df, 'pl_orbsmax')) # W/m^2
+    df = set_unp_uarray(df, 'pl_insol', tmp/earth_insolation(), inds) # normalize by Earth
+    df = set_unp_uarray(df, 'pl_eqt', equilibrium_temperature(tmp, 0.0), inds)
 
     # Deal with masses
     # Filter out planets without known radii
@@ -199,16 +236,29 @@ def search_nea_csv(filename, filters={}):
 
     # Create new mass column
     df['pl_bmasse2'] = np.zeros(len(df['pl_bmasse']))
+    df['pl_bmasse2err1'] = np.zeros(len(df['pl_bmasse']))
+    df['pl_bmasse2err2'] = np.zeros(len(df['pl_bmasse']))
     df['pl_bmasse2_chen'] = np.zeros(len(df['pl_bmasse']),bool)
 
     # Where the mass is a limit, we use Kipping mass
     inds = df['pl_bmasselim'].astype(bool)
     df['pl_bmasse2'][inds] = chen_kipping_mass(df['pl_rade'][inds])
+    df['pl_bmasse2err1'][inds] = np.zeros(np.sum(inds))*np.nan
+    df['pl_bmasse2err2'][inds] = np.zeros(np.sum(inds))*np.nan
     df['pl_bmasse2_chen'][inds] = True
     # Where mass is not a limit, we use the NEA mass
     inds = ~df['pl_bmasselim'].astype(bool)
     df['pl_bmasse2'][inds] = df['pl_bmasse'][inds]
+    df['pl_bmasse2err1'][inds] = df['pl_bmasseerr1'][inds]
+    df['pl_bmasse2err2'][inds] = df['pl_bmasseerr2'][inds]
     df['pl_bmasse2_chen'][inds] = False
+
+    # Compute density
+    pl_rade = make_unp_uarray(df,'pl_rade')
+    pl_bmasse2 = make_unp_uarray(df,'pl_bmasse2')
+    dene = (constants.M_earth.value)/((4/3)*np.pi*(constants.R_earth.value)**3)
+    pl_dene = (pl_bmasse2*constants.M_earth.value)/((4/3)*np.pi*(pl_rade*constants.R_earth.value)**3)
+    df = set_unp_uarray(df, 'pl_dene', pl_dene/dene)
 
     # Filter out stars with unknown magnitudes, Teq
     inds = np.isfinite(df['sy_vmag']) & np.isfinite(df['sy_kmag']) & np.isfinite(df['pl_eqt']) & np.isfinite(df['st_rad'])
@@ -217,10 +267,21 @@ def search_nea_csv(filename, filters={}):
 
     # Estimate the J mag from V and Ks
     mamajek = MamajekColorTable()
-    df['sy_jmag'] = np.array([mamajek.estimate_J_from_V_Ks(df['sy_vmag'][i], df['sy_kmag'][i]) for i in range(len(df['sy_kmag']))])
+    tmp = np.array([mamajek.estimate_J_from_V_Ks(df['sy_vmag'][i], df['sy_kmag'][i]) for i in range(len(df['sy_kmag']))])
+    df['sy_jmag'] = tmp[:,0]
+    df['sy_jmagerr1'] = tmp[:,1]
+    df['sy_jmagerr2'] = -tmp[:,1]
 
     # TSM
-    df['pl_tsm'] = compute_TSM(df['pl_rade'], df['pl_eqt'], df['pl_bmasse2'], df['st_rad'], df['sy_jmag'])
+    pl_tsm = compute_TSM(
+        make_unp_uarray(df,'pl_rade'), 
+        make_unp_uarray(df,'pl_eqt'), 
+        make_unp_uarray(df,'pl_bmasse2'), 
+        make_unp_uarray(df,'st_rad'), 
+        make_unp_uarray(df,'sy_jmag')
+    )
+    df = set_unp_uarray(df, 'pl_tsm', pl_tsm)
+
     inds = np.isfinite(df['pl_tsm'])
     for key in df:
         df[key] = df[key][inds]
@@ -321,8 +382,9 @@ def apply_filters_to_nea(df, filters):
     # Keepers
     if 'pl_name_keep' in filters:
         for pl_name in filters['pl_name_keep']:
-            ind = list(df_save['pl_name']).index(pl_name)
-            for key in df:
-                df[key] = np.append(df[key],df_save[key][ind])
+            if pl_name not in list(df['pl_name']):
+                ind = list(df_save['pl_name']).index(pl_name)
+                for key in df:
+                    df[key] = np.append(df[key],df_save[key][ind])
 
     return df
