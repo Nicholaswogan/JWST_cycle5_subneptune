@@ -6,6 +6,9 @@ import pickle
 from pymultinest.solve import solve
 import os
 
+from threadpoolctl import threadpool_limits
+_ = threadpool_limits(limits=1)
+
 def quantile_to_uniform(quantile, lower_bound, upper_bound):
     return quantile*(upper_bound - lower_bound) + lower_bound
 
