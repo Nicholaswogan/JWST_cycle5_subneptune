@@ -2,7 +2,6 @@ name: cycle5
 channels:
   - conda-forge
   - bokeh
-  - defaults
 dependencies:
   - numba=0.60.0
   - numpy=1.26.4
