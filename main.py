@@ -111,8 +111,8 @@ def photochemistry():
     inputs['x_acc'] = 0.5
     model_utils.run_photochem(**inputs)
 
-def make_picasos(filename=None):
-    if filename is None:
+def make_picasos(filename_db=None):
+    if filename_db is None:
         filename_db = os.path.join(os.environ['picaso_refdata'],'opacities/')+'opacities.db'
     pl = planets.TOI1266c
     st = planets.TOI1266

@@ -1,23 +1,34 @@
 # Environment
 
 ```sh
-conda create -n cycle5 -c conda-forge -c bokeh photochem=0.6.7 numpy=1.24 mpi4py dill tqdm astropy=6.1 matplotlib jupyter uncertainties adjustText pandas pip xarray pathos bokeh=2.4.3 joblib photutils pysynphot sphinx bibtexparser netcdf4 h5netcdf wget unzip tar pymultinest=2.12 scipy=1.11
-conda activate cycle5
+mamba env create -f environment.yaml
+mamba activate cycle5
 
-# Install PICASO
-wget https://github.com/natashabatalha/picaso/archive/4d5eded20c38d5e0189d49f643518a7b336a5768.zip
-unzip 4d5eded20c38d5e0189d49f643518a7b336a5768.zip
-cd picaso-4d5eded20c38d5e0189d49f643518a7b336a5768
-python -m pip install . -v
-cd ../
-cp -r picaso-4d5eded20c38d5e0189d49f643518a7b336a5768/reference picasofiles/
-rm -rf picaso-4d5eded20c38d5e0189d49f643518a7b336a5768
-rm 4d5eded20c38d5e0189d49f643518a7b336a5768.zip
+# Install picaso
+pip install picaso==3.2 -v
 
-python -m pip install pandexo.engine==2.0
+# Get reference
+wget https://github.com/natashabatalha/picaso/archive/4d907355da9e1dcca36cd053a93ef6112ce08807.zip
+unzip 4d907355da9e1dcca36cd053a93ef6112ce08807.zip
+cp -r picaso-4d907355da9e1dcca36cd053a93ef6112ce08807/reference picasofiles/
+rm -rf picaso-4d907355da9e1dcca36cd053a93ef6112ce08807
+rm 4d907355da9e1dcca36cd053a93ef6112ce08807.zip
+
+# Star stuff
+wget http://ssb.stsci.edu/trds/tarfiles/synphot3.tar.gz
+tar -xvzf synphot3.tar.gz
+mv grp picasofiles/
+rm synphot3.tar.gz
+
+# opacity db
+wget https://zenodo.org/records/3759675/files/opacities.db
+mv opacities.db picasofiles/reference/opacities/
 
 export picaso_refdata=$(pwd)"/picasofiles/reference/"
-# Assume star information is on system
+export PYSYN_CDBS=$(pwd)"/picasofiles/grp/redcat/trds"
+
+# python -m pip install pandexo.engine==2.0
+# export picaso_refdata='/Users/nicholas/Applications/picaso_data/reference/'
 ```
 
 # Activate
