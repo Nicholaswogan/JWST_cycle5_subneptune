@@ -87,11 +87,11 @@ def prior_atm(cube):
     params[8] = quantile_to_uniform(cube[8], -1000.0e-6, 1000.0e-6) # offset_g395m
     return params
 
-def make_loglike(model, check_implicit_prior, data_dict, p):
+def make_loglike(model, check_implicit_prior, data_dict, data_keys, p):
     def loglike(cube):
 
         y, e = np.zeros((0)), np.zeros((0))
-        for key in data_dict:
+        for key in data_keys:
             y = np.append(y, data_dict[key]['rprs2'])
             e = np.append(e, data_dict[key]['err'])
 
@@ -105,9 +105,9 @@ def make_loglike(model, check_implicit_prior, data_dict, p):
         return loglikelihood
     return loglike
 
-def make_loglike_prior(p, data_dict, model, _model, prior, check_implicit_prior, param_names):
+def make_loglike_prior(p, data_dict, data_keys, model, _model, prior, check_implicit_prior, param_names):
 
-    loglike = make_loglike(model, check_implicit_prior, data_dict, p)
+    loglike = make_loglike(model, check_implicit_prior, data_dict, data_keys, p)
 
     out = {
         'loglike': loglike,
@@ -170,17 +170,18 @@ def make_cases():
         'T', 'log10Ptop_cld', 'offset_soss', 'offset_g395m'
     ]
 
+    data_keys = ['NIRISS SOSS','NIRSpec G395M']
     data_dicts_c, data_dicts_b = make_data()
 
     # Planet c
-    cases['c1'] = make_loglike_prior(PICASO_C, data_dicts_c[0], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
-    cases['c2'] = make_loglike_prior(PICASO_C, data_dicts_c[1], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
-    cases['c3'] = make_loglike_prior(PICASO_C, data_dicts_c[2], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['c1'] = make_loglike_prior(PICASO_C, data_dicts_c[0], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['c2'] = make_loglike_prior(PICASO_C, data_dicts_c[1], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['c3'] = make_loglike_prior(PICASO_C, data_dicts_c[2], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
 
     # Planet b
-    cases['b1'] = make_loglike_prior(PICASO_B, data_dicts_b[0], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
-    cases['b2'] = make_loglike_prior(PICASO_B, data_dicts_b[1], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
-    cases['b3'] = make_loglike_prior(PICASO_B, data_dicts_b[2], model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['b1'] = make_loglike_prior(PICASO_B, data_dicts_b[0], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['b2'] = make_loglike_prior(PICASO_B, data_dicts_b[1], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
+    cases['b3'] = make_loglike_prior(PICASO_B, data_dicts_b[2], data_keys, model_atm, _model_atm, prior_atm, check_implicit_prior_atm, param_names)
 
     return cases
 
