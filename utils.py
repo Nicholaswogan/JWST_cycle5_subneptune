@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 import numpy as np
 from uncertainties import unumpy as unp
 from matplotlib import pyplot as plt
@@ -7,7 +10,6 @@ import os
 from scipy import constants as const
 from astropy import constants
 
-from picaso import fluxes
 import pandas as pd
 from copy import deepcopy
 
@@ -107,11 +109,6 @@ def equilibrium_temperature(stellar_radiation, bond_albedo):
     T_eq = ((stellar_radiation*(1.0 - bond_albedo))/(4.0*const.sigma))**(0.25)
     return T_eq 
 
-def escape_velocity(mass, radius):
-    Mp = mass*constants.M_earth.value
-    Rp = radius*constants.R_earth.value
-    return np.sqrt(2*const.G*Mp/Rp)
-
 def chen_kipping_mass(Rp):
     """
     Chen & Kipping (2017) empirical piecewise mass-radius used in Kempton+2018 (as implemented by Louie+2018).
@@ -126,7 +123,43 @@ def chen_kipping_mass(Rp):
     inds = np.where(Rp >= 1.23)
     Mp[inds] = 1.436 * Rp[inds]**1.70
     return Mp
+
+def escape_velocity(mass, radius):
+    Mp = mass*constants.M_earth.value
+    Rp = radius*constants.R_earth.value
+    vesc = (2*const.G*Mp/Rp)**(0.5) # m/s
+    vesc = vesc/1e3 # to km/s
+    return vesc
+
+def XUV_estimation(I, Teff, Rs_Rs, b=-0.6):
+    "Equation 27 in Zahnle and Catling (2017)."
+    Rs = Rs_Rs*constants.R_sun.value # to meters
+    L = const.sigma*Teff**4*(4*np.pi*Rs**2) # Watts
+    Lsun = constants.L_sun.value # Watts
+    I_XUV = I*(L/Lsun)**b
+    return I_XUV
+
+def blackbody(T, lam):
+    """Blackbody flux in cgs units in per unit wavelength (erg/cm^2/s/cm/sr)
+
+    Parameters
+    ----------
+    T : float
+        Temperature (K)
+    lam : ndarray[ndim=1,double]
+        Wavelength (cm)
     
+    Returns
+    -------
+    ndarray[ndim=1,double]
+        The blackbody flux at the input wavelengths in erg/cm^2/s/cm/sr.
+    """
+    h = const.h*1e7 # erg s 
+    c = const.c*1e2 # cm/s
+    k = const.k*1e7 # erg / K
+    B = ((2.0*h*c**2.0)/(lam**5.0))*(1.0/(np.exp((h*c)/(lam*k*T)) - 1.0))
+    return B
+
 def compute_TSM(Rp, Teq, Mp, Rs, m_j):
     "Compute the Transmission Spectroscopy Metric (TSM) from Kempton et al. (2018)"
 
@@ -144,6 +177,20 @@ def compute_TSM(Rp, Teq, Mp, Rs, m_j):
     TSM = scale * (Rp**3.0*Teq)/(Mp*Rs**2.0) * factor_mag
 
     return TSM
+
+def compute_ESM(Rp_Re, Teq, Teff, Rs_Rs, m_k):
+    "Compute the Emission Spectroscopy Metric (ESM) from Kempton et al. (2018)"
+
+    Tday = 1.1*Teq
+    B_day = blackbody(unp.nominal_values(Tday), 7.5/1e4)
+    B_star = blackbody(unp.nominal_values(Teff), 7.5/1e4)
+
+    Rp = Rp_Re*constants.R_earth.value
+    Rs = Rs_Rs*constants.R_sun.value
+
+    ESM = 4.29e6*(B_day/B_star)*(Rp/Rs)**2*(10.0**(-m_k/5))
+
+    return ESM
 
 def print_planet_properties(df, name):
     ind = list(df['pl_name']).index(name)
@@ -286,9 +333,48 @@ def search_nea_csv(filename, filters={}):
     for key in df:
         df[key] = df[key][inds]
 
+    # ESM
+    pl_esm = compute_ESM(
+        Rp_Re=make_unp_uarray(df,'pl_rade'), 
+        Teq=make_unp_uarray(df,'pl_eqt'), 
+        Teff=make_unp_uarray(df,'st_teff'),
+        Rs_Rs=make_unp_uarray(df,'st_rad'), 
+        m_k=make_unp_uarray(df,'sy_kmag'),
+    )
+    df = set_unp_uarray(df, 'pl_esm', pl_esm)
+
+    # Escape velocity (km/s)
+    vesc = escape_velocity(
+        make_unp_uarray(df,'pl_bmasse2'), 
+        make_unp_uarray(df,'pl_rade')
+    )
+    df = set_unp_uarray(df, 'pl_vesc', vesc)
+
+    # Cumulative XUV
+    pl_xuv = XUV_estimation(
+        I=make_unp_uarray(df,'pl_insol'),
+        Teff=make_unp_uarray(df,'st_teff'),
+        Rs_Rs=make_unp_uarray(df,'st_rad')
+    )
+    df = set_unp_uarray(df, 'pl_xuv', pl_xuv)
+
     df = apply_filters_to_nea(df, filters)
 
     return df
+
+def vals_and_error(df, key):
+    err = np.empty((2,len(df[key])))
+    err[0,:] = -df[key+'err2']
+    err[1,:] = df[key+'err1']
+    val = df[key]
+    return val, err
+
+def is_float(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 def jwst_observations(filename, nea_filename, filters={}, uniques=True):
 
@@ -305,11 +391,16 @@ def jwst_observations(filename, nea_filename, filters={}, uniques=True):
     # Get pl_name
     planet_names = []
     for i in range(len(df['NEA name'])):
-        planet_names.append(str(df['NEA name'][i]) +' '+ df['Planet letter'][i])
+        letter = df['Planet letter'][i]
+        if is_float(letter):
+            name = str(df['NEA name'][i]) + str(letter)[1:]
+        else:
+            name = str(df['NEA name'][i]) +' '+ letter
+        planet_names.append(name)
     df['pl_name'] = np.array(planet_names)
 
     # Trim the keys
-    keys = ['pl_name','Program','PI name','Event','Mode','urls']
+    keys = ['pl_name','Program Number','Program','PI name','Event','Mode','urls']
     df1 = {}
     for key in keys:
         df1[key] = df[key]
@@ -329,13 +420,13 @@ def jwst_observations(filename, nea_filename, filters={}, uniques=True):
         if key != 'pl_name':
             df[key] = np.array(df[key])
 
+    df = apply_filters_to_nea(df, filters)
+
     if uniques:
         # Get Uniques
         _, inds = np.unique(df['pl_name'],return_index=True)
         for key in df:
             df[key] = df[key][inds]
-
-    df = apply_filters_to_nea(df, filters)
 
     return df
 
@@ -387,4 +478,12 @@ def apply_filters_to_nea(df, filters):
                 for key in df:
                     df[key] = np.append(df[key],df_save[key][ind])
 
+    return df
+
+def sort_df(df, key, reverse=False):
+    inds = np.argsort(df[key])
+    if reverse:
+        inds = inds[::-1]
+    for key in df:
+        df[key] = df[key][inds]
     return df
